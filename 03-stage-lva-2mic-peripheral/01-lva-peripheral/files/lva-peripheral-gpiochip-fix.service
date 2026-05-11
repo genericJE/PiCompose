@@ -1,0 +1,13 @@
+[Unit]
+Description=Pick the correct /dev/gpiochip for the LVA peripheral compose project
+ConditionPathExists=/compose/lva-peripheral/docker-compose.yml
+After=local-fs.target
+Before=picompose.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/lva-peripheral-gpiochip-fix.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,120 @@
+---
+# Linux Voice Assistant + ReSpeaker 2-Mic HAT peripheral controller.
+#
+# Two services in one compose project so service ordering is local and HA
+# only enumerates the satellite's entities once both LVA and the peripheral
+# Light entity are registered. LVA is started with --peripheral-startup-wait 8
+# (see the `command:` override below) which gives the peripheral container
+# room to connect to ws://localhost:6055 before LVA accepts HA connections
+# on 6053.
+#
+# Both images are built locally from cloned source on first boot:
+#   ./lva-src    — genericJE/linux-voice-assistant feat/peripheral-led-light-entity
+#                  (Dockerfile.local, not the upstream Dockerfile)
+#   ./peripheral — the same branch's examples/ReSpeaker 2mic HAT/ directory
+#
+# GPIO device note: /dev/gpiochip0 is mapped for Pi 3 / 4 / Zero 2 W.
+# On Pi 5 the 40-pin header sits on /dev/gpiochip4 instead — the
+# `lva-peripheral-gpiochip-fix.service` (ordered Before=picompose.service)
+# rewrites this file once on first boot if it detects a Pi 5.
+
+services:
+  fix-permissions:
+    build:
+      context: ./lva-src
+      dockerfile: Dockerfile.local
+    image: lva-peripheral-lva:local
+    entrypoint: []
+    command: "chown -R ${LVA_USER_ID:-1000}:${LVA_USER_GROUP:-1000} /app/local /app/configuration /app/wakewords/custom /app/sounds/custom"
+    environment:
+      - XDG_RUNTIME_DIR=${LVA_XDG_RUNTIME_DIR:-/run/user/1000}
+      - PULSE_SERVER=${LVA_PULSE_SERVER:-/run/user/1000/pulse/native}
+      - PULSE_COOKIE=${LVA_PULSE_COOKIE:-/run/user/1000/pulse/cookie}
+    env_file: .env
+    group_add:
+      - audio
+    volumes:
+      - wakeword_data:/app/local
+      - wakeword_custom:/app/wakewords/custom
+      - configuration:/app/configuration
+      - sounds_custom:/app/sounds/custom
+    restart: "no"
+
+  linux-voice-assistant:
+    container_name: linux-voice-assistant
+    build:
+      context: ./lva-src
+      dockerfile: Dockerfile.local
+    image: lva-peripheral-lva:local
+    restart: unless-stopped
+    network_mode: host
+    user: "${LVA_USER_ID:-1000}:${LVA_USER_GROUP:-1000}"
+    environment:
+      - XDG_RUNTIME_DIR=${LVA_XDG_RUNTIME_DIR:-/run/user/1000}
+      - PULSE_SERVER=${LVA_PULSE_SERVER:-/run/user/1000/pulse/native}
+      - PULSE_COOKIE=${LVA_PULSE_COOKIE:-/run/user/1000/pulse/cookie}
+    env_file: .env
+    group_add:
+      - audio
+    cap_add:
+      - SYS_NICE
+    volumes:
+      - wakeword_data:/app/local
+      - wakeword_custom:/app/wakewords/custom
+      - configuration:/app/configuration
+      - sounds_custom:/app/sounds/custom
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+      - ${LVA_XDG_RUNTIME_DIR:-/run/user/1000}:${LVA_XDG_RUNTIME_DIR:-/run/user/1000}
+    command:
+      - "--peripheral-startup-wait"
+      - "8"
+    depends_on:
+      - fix-permissions
+    healthcheck:
+      test: ["CMD", "pgrep", "-f", "linux_voice_assistant"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 90s
+
+  respeaker-peripheral:
+    container_name: respeaker-peripheral
+    build:
+      context: ./peripheral
+    image: lva-peripheral-respeaker:local
+    restart: unless-stopped
+    network_mode: host
+    user: "${LVA_USER_ID:-1000}:${LVA_USER_GROUP:-1000}"
+    devices:
+      - /dev/spidev0.0:/dev/spidev0.0
+      - /dev/gpiochip0:/dev/gpiochip0
+    group_add:
+      - gpio
+      - spi
+    environment:
+      - PYTHONUNBUFFERED=1
+    command:
+      - "--host"
+      - "localhost"
+      - "--port"
+      - "6055"
+    depends_on:
+      - linux-voice-assistant
+    healthcheck:
+      test: ["CMD", "pgrep", "-f", "respeaker_2mic_hat.py"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  wakeword_data:
+  wakeword_custom:
+  configuration:
+  sounds_custom:

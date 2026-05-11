@@ -60,6 +60,20 @@ jobs:
       compression-level: 6
       custom-hostname: picompose
 
+  # 2MICHAT-v2 + LVA peripheral (smoke-test image for the unmerged
+  # genericJE/linux-voice-assistant feat/peripheral-led-light-entity branch:
+  # Light entity, Rainbow effect, ReSpeaker 2-Mic peripheral controller).
+  # Emits a single-image rpi-imager.json alongside the .img.xz.
+  build-2michat-v2-lva-peripheral:
+    uses: ./.github/workflows/build-image-template.yml
+    with:
+      image-name: PiCompose_2MicHat-v2_LVA-Peripheral
+      stage-list: stage0 stage1 stage2 ./01-stage-picompose ./02-stage-audiodriver-2michat-v2 ./03-stage-lva-2mic-peripheral ./04-stage-finish
+      compression: xz
+      compression-level: 6
+      custom-hostname: picompose
+      enable-rpi-imager-snippet: true
+
   # RESPEAKER-LITE
   build-respeaker_lite:
     uses: ./.github/workflows/build-image-template.yml
