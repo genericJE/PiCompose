@@ -137,6 +137,7 @@ Common edits:
 - Pin a specific ALSA/PulseAudio device (`.env`: `AUDIO_OUTPUT_DEVICE=...`, `AUDIO_INPUT_DEVICE=...`)
 - Switch peripheral GPIO chip back to `/dev/gpiochip0` if running on a Pi 3/4 after the Pi 5 fixup auto-ran
 - Set `ENABLE_DEBUG=1` in `.env` for verbose LVA logging
+- Override `GPIO_GID` / `SPI_GID` in `.env` if the host's `gpio` / `spi` group IDs differ from the stock Raspberry Pi OS defaults (986 / 989). Check with `getent group gpio spi`. The peripheral container joins these numerically because the slim Python base has no `gpio` / `spi` groups to resolve by name.
 
 ## Flashing
 
