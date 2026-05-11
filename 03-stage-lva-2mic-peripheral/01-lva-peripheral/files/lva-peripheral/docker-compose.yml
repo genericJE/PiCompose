@@ -89,9 +89,13 @@ services:
     devices:
       - /dev/spidev0.0:/dev/spidev0.0
       - /dev/gpiochip0:/dev/gpiochip0
+    # group_add resolves names against the container's /etc/group, but the
+    # python:slim base doesn't define gpio or spi. Pass numeric GIDs so they
+    # match the host's groups instead. Defaults match a stock Raspberry Pi OS
+    # install (check yours with ``getent group gpio spi`` on the host).
     group_add:
-      - gpio
-      - spi
+      - "${GPIO_GID:-986}"
+      - "${SPI_GID:-989}"
     environment:
       - PYTHONUNBUFFERED=1
     command:
