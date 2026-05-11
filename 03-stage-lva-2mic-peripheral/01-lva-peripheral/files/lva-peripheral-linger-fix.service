@@ -1,0 +1,13 @@
+[Unit]
+Description=Enable systemd linger for the UID 1000 runtime user (LVA peripheral)
+ConditionPathExists=/compose/lva-peripheral/docker-compose.yml
+After=local-fs.target
+Before=picompose.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/lva-peripheral-linger-fix.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

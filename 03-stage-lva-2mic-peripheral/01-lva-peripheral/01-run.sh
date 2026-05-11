@@ -60,7 +60,21 @@ install -v -D -m 755 files/lva-peripheral-gpiochip-fix.sh \
 install -v -D -m 644 files/lva-peripheral-gpiochip-fix.service \
     "${ROOTFS_DIR}/etc/systemd/system/lva-peripheral-gpiochip-fix.service"
 
-# Group membership + SPI overlay + enable the gpiochip-fix unit inside the chroot.
+# Helper that enables systemd linger for whoever UID 1000 ends up being at
+# runtime. Pi Imager's first-boot wizard typically renames ``pi`` to a
+# user-supplied name, orphaning the linger file the pipewire stage already
+# created under /var/lib/systemd/linger/pi. Without linger, /run/user/1000
+# (where PipeWire's PulseAudio socket lives) is session-scoped: the moment
+# the user SSHs out, the tmpfs is torn down, and the LVA container's
+# bind-mount of /run/user/1000 goes stale — audio capture starts failing
+# with "Connection refused" and HA shows "voice assistant unable to
+# connect".  Runs once at boot before picompose deploys.
+install -v -D -m 755 files/lva-peripheral-linger-fix.sh \
+    "${ROOTFS_DIR}/usr/local/sbin/lva-peripheral-linger-fix.sh"
+install -v -D -m 644 files/lva-peripheral-linger-fix.service \
+    "${ROOTFS_DIR}/etc/systemd/system/lva-peripheral-linger-fix.service"
+
+# Group membership + SPI overlay + enable the helper units inside the chroot.
 on_chroot << 'EOF'
 getent group spi  >/dev/null && usermod -aG spi  pi || true
 getent group gpio >/dev/null && usermod -aG gpio pi || true
@@ -74,6 +88,7 @@ grep -q "^dtparam=spi=on$" "$CONFIG" || echo "dtparam=spi=on" >> "$CONFIG"
 
 systemctl daemon-reload
 systemctl enable lva-peripheral-gpiochip-fix.service
+systemctl enable lva-peripheral-linger-fix.service
 EOF
 
 rm -rf "$SRC"
