@@ -121,28 +121,97 @@ jobs:
         id: sha256
         run: |
           IMAGE_PATH="${{ steps.build.outputs.image-path }}"
-          
+
           # Determine if image-path is a file
           if [ -f "$IMAGE_PATH" ]; then
             # Calculate SHA256 hash and extract only the hash value
             SHA256_HASH=$(sha256sum "$IMAGE_PATH" | awk '{print $1}')
-            
+
             # Get file size in bytes
             FILE_SIZE=$(stat -c%s "$IMAGE_PATH")
-            
+
             # Write hash to sha256 file
             echo "${SHA256_HASH}  $(basename "$IMAGE_PATH")" > "${IMAGE_PATH}.sha256"
-            
+
             # Set as GitHub Action outputs
             echo "sha256_hash=${SHA256_HASH}" >> $GITHUB_OUTPUT
             echo "file_size=${FILE_SIZE}" >> $GITHUB_OUTPUT
-            
+            echo "image_path=${IMAGE_PATH}" >> $GITHUB_OUTPUT
+            echo "image_basename=$(basename "$IMAGE_PATH")" >> $GITHUB_OUTPUT
+
             echo "SHA256 checksum generated for: $IMAGE_PATH"
             echo "SHA256 hash: $SHA256_HASH"
             echo "File size: $FILE_SIZE bytes"
           else
             echo "::warning::Image path not found: $IMAGE_PATH"
           fi
+
+      # Generate a single-image rpi-imager.json so the user can load this
+      # specific build directly via "Use custom image" / repo URL in Pi Imager.
+      # Only runs when the build job opts in via enable-rpi-imager-snippet.
+      - name: Generate single-image rpi-imager.json
+        if: inputs.enable-rpi-imager-snippet && steps.sha256.outputs.image_path != ''
+        id: imager-json
+        run: |
+          IMAGE_PATH="${{ steps.sha256.outputs.image_path }}"
+          BASENAME="${{ steps.sha256.outputs.image_basename }}"
+          DOWNLOAD_SIZE="${{ steps.sha256.outputs.file_size }}"
+
+          REF_NAME="${{ github.ref_name }}"
+          REF_ENCODED="${REF_NAME//\//%2F}"
+          IMAGE_URL="https://github.com/${{ github.repository }}/releases/download/${REF_ENCODED}/${BASENAME}"
+
+          # Pi Imager validates the decompressed image, not the .xz wrapper,
+          # so the published sha256 must be of the underlying .img.
+          if [[ "$BASENAME" == *.xz ]]; then
+            EXTRACT_SHA256=$(xzcat "$IMAGE_PATH" | sha256sum | awk '{print $1}')
+            EXTRACT_SIZE=$(xz --list --robot "$IMAGE_PATH" | awk '/^totals/ {print $5}')
+          elif [[ "$BASENAME" == *.zip ]]; then
+            EXTRACT_SHA256=$(unzip -p "$IMAGE_PATH" | sha256sum | awk '{print $1}')
+            EXTRACT_SIZE=$(unzip -l "$IMAGE_PATH" | awk '/[0-9]+ +[0-9-]+ +[0-9:]+ +.+\.img$/ {print $1}' | head -1)
+          else
+            EXTRACT_SHA256="$(sha256sum "$IMAGE_PATH" | awk '{print $1}')"
+            EXTRACT_SIZE="$DOWNLOAD_SIZE"
+          fi
+
+          OS_NAME="${{ inputs.image-name }}"
+          # raw.githubusercontent.com handles slashes in refs natively, so
+          # we keep REF_NAME un-encoded here even though the releases URL
+          # above needs the %2F form.
+          ICON_URL="https://raw.githubusercontent.com/${{ github.repository }}/${REF_NAME}/docs/respeaker_2michats.webp"
+
+          cat > rpi-imager.json <<JSON
+          {
+            "imager": {
+              "latest_version": "${REF_NAME}",
+              "url": "https://www.raspberrypi.com/software/",
+              "devices": [
+                {"name": "Raspberry Pi 5", "tags": ["pi5-64bit", "pi5-32bit"], "default": true, "icon": "https://downloads.raspberrypi.com/imager/icons/RPi_5.png", "description": "Raspberry Pi 5, 500 / 500+, and Compute Module 5", "matching_type": "exclusive", "capabilities": []},
+                {"name": "Raspberry Pi 4", "tags": ["pi4-64bit", "pi4-32bit"], "icon": "https://downloads.raspberrypi.com/imager/icons/RPi_4.png", "description": "Raspberry Pi 4 Model B, 400, and Compute Module 4 / 4S", "matching_type": "inclusive", "capabilities": []},
+                {"name": "Raspberry Pi 3", "tags": ["pi3-64bit", "pi3-32bit"], "icon": "https://downloads.raspberrypi.com/imager/icons/RPi_3.png", "description": "Raspberry Pi 3 Model A+ / B / B+ and Compute Module 3 / 3+", "matching_type": "inclusive", "capabilities": []},
+                {"name": "Raspberry Pi Zero 2 W", "tags": ["pi3-64bit", "pi3-32bit"], "icon": "https://downloads.raspberrypi.com/imager/icons/RPi_Zero_2_W.png", "description": "Raspberry Pi Zero 2 W", "matching_type": "inclusive", "capabilities": []}
+              ]
+            },
+            "os_list": [
+              {
+                "name": "${OS_NAME} (${REF_NAME})",
+                "description": "PiCompose image: 2-Mic HAT v2 + Linux Voice Assistant from feat/peripheral-led-light-entity (Light entity + Rainbow effect, ReSpeaker 2-Mic peripheral). Built ${{ github.sha }} on branch ${REF_NAME}.",
+                "icon": "${ICON_URL}",
+                "url": "${IMAGE_URL}",
+                "init_format": "systemd",
+                "image_download_size": ${DOWNLOAD_SIZE},
+                "extract_size": ${EXTRACT_SIZE},
+                "extract_sha256": "${EXTRACT_SHA256}",
+                "devices": ["pi5-64bit", "pi4-64bit", "pi3-64bit"],
+                "capabilities": ["ssh", "wifi", "hostname", "locale"]
+              }
+            ]
+          }
+          JSON
+
+          echo "rpi-imager.json:"
+          cat rpi-imager.json
+          echo "imager_json_path=$(pwd)/rpi-imager.json" >> $GITHUB_OUTPUT
 
       # Build the image URL for releases
       - name: Build image URL
@@ -175,9 +244,11 @@ jobs:
           generate_release_notes: true
           prerelease: false
           draft: false
+          fail_on_unmatched_files: false
           files: |
             ${{ steps.build.outputs.image-path }}
             ${{ steps.build.outputs.image-path }}.sha256
+            rpi-imager.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -190,9 +261,11 @@ jobs:
           generate_release_notes: true
           prerelease: true
           draft: false
+          fail_on_unmatched_files: false
           files: |
             ${{ steps.build.outputs.image-path }}
             ${{ steps.build.outputs.image-path }}.sha256
+            rpi-imager.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
